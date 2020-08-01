@@ -1,7 +1,6 @@
-#!/usr/bin/env python
+#!/usr/bin/env python3
 
 '''
-    enw.py
     Copyright (C) 2012 Rhys Owen, rhysun@gmail.com
 
     This program is free software: you can redistribute it and/or modify
@@ -31,8 +30,11 @@
        C     a     B
 '''
 
-import inkex, simplepath, simpletransform
+import inkex
+from inkex.paths import Path
+from inkex import Transform
 from math import *
+from lxml import etree
 import gettext
 _ = gettext.gettext
 
@@ -66,11 +68,11 @@ def aLength(b, h):
 
 
 def getPathData(obj):
-    if obj.get("d"):# Os ydi'r cylch wedi ei drosi i wrthrych llwybr
+    if obj.get("d"):# If the circle has been converted to a path object
         d = obj.get("d")
-        p = simplepath.parsePath(d)
+        p = Path(d)
         if obj.get("transform"):
-            trans = simpletransform.parseTransform(obj.get("transform"))
+            trans = Transform(obj.get("transform"))
             scalex = trans[0][0]
             scaley = trans[1][1]
             data = {'rx' : p[1][1][0]*scalex,
@@ -82,7 +84,7 @@ def getPathData(obj):
                     'ry': p[1][1][1],
                     'x' : p[0][1][0]-p[1][1][0],
                     'y' : p[0][1][1]}
-    elif obj.get("r"):# Ar gyfer gwrthrych cylch pur
+    elif obj.get("r"):# For a pure circle object
         r = obj.get("r")
         cx = obj.get("cx")
         cy = obj.get("cy")
@@ -90,7 +92,7 @@ def getPathData(obj):
                 'ry' : float(r),
                 'x' : float(cx),
                 'y' : float(cy)}
-    elif obj.get("rx"):# Ar gyfer elips
+    elif obj.get("rx"):# For ellipses
         rx = obj.get("rx")
         ry = obj.get("ry")
         cx = obj.get("cx")
@@ -112,19 +114,18 @@ def stockErrorMsg(bygtrac):
 class Tangent(inkex.Effect):
     def __init__(self):
         inkex.Effect.__init__(self)
-        self.OptionParser.add_option("-p", "--position",
-                        action="store", type="string",
-                        dest="position", default="inner",
-                        help=_("Choose either inner or outer tangent lines"))
+        self.arg_parser.add_argument("--position", default="inner",  help="Choose either inner or outer tangent lines")
+        self.arg_parser.add_argument("--selector", default="both",  help="Choose which tangents you want to get")
+		
     def effect(self):
         if len(self.options.ids) != 2:
             stockErrorMsg("1")
             
-        c1object = self.selected[self.options.ids[0]]
-        c2object = self.selected[self.options.ids[1]]
+        c1object = self.svg.selected[self.options.ids[0]]
+        c2object = self.svg.selected[self.options.ids[1]]
 
         #if c1object.get(inkex.addNS("type", "sodipodi")) != "arc" or c2object.get(inkex.addNS("type", "sodipodi")) != "arc":
-        #    stockErrorMsg("2")#PROBLEM YMA!
+        #    stockErrorMsg("2")#PROBLEM HERE!
 
         c1 = getPathData(c1object)
         c2 = getPathData(c2object)
@@ -151,76 +152,71 @@ class Tangent(inkex.Effect):
 
         # Test whether the circles are actually circles!
         if c1['rx'] != c1['ry'] or c2['rx'] != c2['ry']:
-            stockErrorMsg("One or both objects may be elliptical.")
+            stockErrorMsg("One or both objects may be elliptical. Ensure you have circles!")
 
-        # Hypotenws y triongl - pellter euclidaidd rhwng c1 x,y a c2 x,y.
+        # Hypotenus of the triangle - Euclidean distance between c1 x, y and c2 x, y.
         h = deuclid(c1['x'], c1['y'], c2['x'], c2['y'])
         b = c3r
         B = getAngle(b, h)
         a = aLength(b, h)
-        # Ongl yr hypotenws i echelin x
+        # Angle of hypotenuse to x-axis
         E = getAngle(max(c1['y'], c2['y']) - min(c1['y'], c2['y']), h)
 
-        # I destio os ydi'r cylch lleiaf yn is na'r llall
+        # To test if the smallest circle is lower than the other
         if cyfB[1] <= cyfA[1]:
             negx = False
         else:
             negx = True
 
-        # I destio os ydi'r cylch lleiaf i'r dde o'r llall
+        # To test if it's the smallest circle to the right of the other
         if cyfB[0] <= cyfA[0]:
             negy = False
         else:
             negy = True
 
-        onglTop = -B+E
-        onglGwaelod = B+E
-        if self.options.position == "outer":# Allanol
-            perptop = -(pi/2)
-            perpgwaelod = pi/2
-        else:# Mewnol
-            perptop = pi/2
-            perpgwaelod = -(pi/2)
+        angleTop = -B+E
+        angleBottom = B+E
+        if self.options.position == "outer":# External
+            perpTop = -(pi/2)
+            perpBottom = pi/2
+        else:# Internal
+            perpTop = pi/2
+            perpBottom = -(pi/2)
 
-        # Cyfesurynnau pen y llinell top
-        cyfC = poltocar(a, onglTop, negx, negy)
-        # Gwybodaeth er mwyn trosi'r cyfesurynnau top 90gradd
-        trositop = poltocar(min(c1['rx'], c2['rx']), perptop+onglTop, negx, negy)#1.5707964 1.57079632679
+        # Top coordinates of the top line
+        cyfC = poltocar(a, angleTop, negx, negy)
+        # Information for converting top 90grade coordinates
+        conversionTop = poltocar(min(c1['rx'], c2['rx']), perpTop+angleTop, negx, negy)#1.5707964 1.57079632679
 
-        # Cyfesurynnau pen y llinell gwaelod
-        cyfD = poltocar(a, onglGwaelod, negx, negy)
-        # Gwybodaeth er mwyn trosi'r cyfesurynnau gwaelod 90gradd
-        trosigwaelod = poltocar(min(c1['rx'], c2['rx']), perpgwaelod+onglGwaelod, negx, negy)
+        # Bottom line coordinates
+        cyfD = poltocar(a, angleBottom, negx, negy)
+        # Information for converting the bottom 90 degree coordinates
+        conversionBottom = poltocar(min(c1['rx'], c2['rx']), perpBottom+angleBottom, negx, negy)
 
-        # Tynnu llinell
+        # Draw a line
         llx1 = cyfA[0]
         lly1 = cyfA[1]
         llsteil = (c1object.get("style"))
 
-        # Llinell 1
-        ll1x2 = cyfC[0]
-        ll1y2 = cyfC[1]
-        enw = "llinell"
-        rhiant = self.getParentNode(c1object)
+        # Line 1
+        if self.options.selector == "first" or self.options.selector == "both":
+            ll1x2 = cyfC[0]
+            ll1y2 = cyfC[1]
+            parent = c1object.getparent()
+            attribsLine1 = {'style':llsteil,
+                            inkex.addNS('label','inkscape'):"line1",
+                            'd':'m '+str(llx1+conversionTop[0])+','+str(lly1+conversionTop[1])+' l '+str(ll1x2)+','+str(ll1y2)}
+            elfen1 = etree.SubElement(parent, inkex.addNS('path','svg'), attribsLine1 )
 
-        attribsLlinell = {'style':llsteil,
-                        inkex.addNS('label','inkscape'):enw,
-                        'd':'m '+str(llx1+trositop[0])+','+str(lly1+trositop[1])+' l '+str(ll1x2)+','+str(ll1y2)}
-        elfen1 = inkex.etree.SubElement(rhiant, inkex.addNS('path','svg'), attribsLlinell )
-
-        #Llinell 2
-        ll2x2 = cyfD[0]
-        ll2y2 = cyfD[1]
-        enw = "llinell"
-        rhiant = self.getParentNode(c1object)
-
-        attribsLlinell = {'style':llsteil,
-                        inkex.addNS('label','inkscape'):enw,
-                        'd':'m '+str(llx1+trosigwaelod[0])+','+str(lly1+trosigwaelod[1])+' l '+str(ll2x2)+','+str(ll2y2)}
-        inkex.etree.SubElement(rhiant, inkex.addNS('path','svg'), attribsLlinell )
+        #Line 2
+        if self.options.selector == "second" or self.options.selector == "both":
+            ll2x2 = cyfD[0]
+            ll2y2 = cyfD[1]
+            parent = c1object.getparent()
+            attribsLine1 = {'style':llsteil,
+                            inkex.addNS('label','inkscape'):"line2",
+                            'd':'m '+str(llx1+conversionBottom[0])+','+str(lly1+conversionBottom[1])+' l '+str(ll2x2)+','+str(ll2y2)}
+            etree.SubElement(parent, inkex.addNS('path','svg'), attribsLine1 )
 
 if __name__ == '__main__':
-    e = Tangent()
-    e.affect()
-
-# vim: expandtab shiftwidth=4 tabstop=8 softtabstop=4 encoding=utf-8 textwidth=99
+    Tangent().run()
